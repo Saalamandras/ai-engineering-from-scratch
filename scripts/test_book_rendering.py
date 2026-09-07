@@ -1,4 +1,6 @@
+import shutil
 import subprocess
+import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -6,6 +8,20 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 FILTER = ROOT / "book" / "literal-tokens.lua"
+PDF_SOURCE_FORMAT = "markdown+fenced_divs+autolink_bare_uris"
+LONG_LINES = """# Wrapping regression
+
+```python
+message = "Every sample in the batch must be pre-padded with the same number of image placeholders before replacing them with projected image embeddings."
+identifier = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+```
+
+```text
+This plain-text code block must also wrap its long lines without losing the final marker: PLAIN_TEXT_END.
+```
+
+Further reading: (http://neuralnetworksanddeeplearning.com/). Keep the URL clickable.
+"""
 
 
 def render(source, output="html"):
@@ -39,6 +55,31 @@ class BookRenderingTest(unittest.TestCase):
             self.assertIn(token, result)
         self.assertEqual(result.count(r"\textless"), 3)
         self.assertEqual(result.count(r"\textgreater"), 3)
+
+    @unittest.skipUnless(shutil.which("xelatex") and shutil.which("pdftotext"),
+                         "PDF layout check requires xelatex and pdftotext")
+    def test_pdf_long_code_and_urls_stay_inside_margins(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pdf = Path(directory) / "wrapping.pdf"
+            result = subprocess.run(
+                ["pandoc", "--from", PDF_SOURCE_FORMAT, "--pdf-engine=xelatex",
+                 "--include-in-header", str(ROOT / "book" / "theme.tex"),
+                 "-V", "documentclass=book", "-V", "geometry=margin=1in",
+                 "-o", str(pdf)],
+                input=LONG_LINES, text=True, capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            bbox = subprocess.check_output(["pdftotext", "-bbox", str(pdf), "-"], text=True)
+        root = ET.fromstring(bbox)
+        ns = {"x": "http://www.w3.org/1999/xhtml"}
+        for page in root.findall(".//x:page", ns):
+            right = float(page.attrib["width"]) - 72
+            for word in page.findall(".//x:word", ns):
+                self.assertGreaterEqual(float(word.attrib["xMin"]), 71, word.text)
+                self.assertLessEqual(float(word.attrib["xMax"]), right + 1, word.text)
+        text = "".join(word.text or "" for word in root.findall(".//x:word", ns))
+        for marker in ("embeddings.", "PLAIN_TEXT_END.", "neuralnetworksanddeeplearning.com"):
+            self.assertIn(marker, text)
 
 
 if __name__ == "__main__":

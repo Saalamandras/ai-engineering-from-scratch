@@ -362,7 +362,7 @@ def render(vol, md, chapters, pdf=False):
         cmd_pdf = [
             "pandoc", str(md),
             "-o", str(pdf_out),
-            "--from", "markdown+fenced_divs",
+            "--from", "markdown+fenced_divs+autolink_bare_uris",
             "--lua-filter", str(ROOT / "book" / "literal-tokens.lua"),
             "--toc", "--toc-depth=1",
             "--top-level-division=chapter",
